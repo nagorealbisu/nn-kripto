@@ -1,0 +1,47 @@
+# Remove CUDA variables (no CUDA needed)
+# CUDA directory:
+# CUDA_ROOT_DIR=/usr/local/cuda
+# NVCC compiler options:
+# NVCC=nvcc
+# NVCC_FLAGS=-Iinclude
+# NVCC_LIBS=
+# CUDA library directory:
+# CUDA_LIB_DIR= -L$(CUDA_ROOT_DIR)/lib64
+# CUDA include directory:
+# CUDA_INC_DIR= -I$(CUDA_ROOT_DIR)/include
+# CUDA linking libraries:
+# CUDA_LINK_LIBS= -lcudart
+
+## Project file structure ##
+SRC_DIR = src
+OBJ_DIR = obj
+INC_DIR = include
+
+BIN_DIR = bin
+BIN = $(BIN_DIR)/nn
+
+# Only use .c files
+SRC_C := $(wildcard $(SRC_DIR)/*.c)
+OBJS_C := $(SRC_C:$(SRC_DIR)/%.c=$(OBJ_DIR)/%.o)
+
+CC=g++
+CC_FLAGS=-Iinclude -MMD -MP -DCPU -Wall
+CC_LIBS=-lm -g
+
+.PHONY: all clean
+
+all: $(BIN)
+
+$(BIN) : $(OBJS_C) | $(BIN_DIR)
+	$(CC) $(CC_FLAGS) $(OBJS_C) -o $@ $(CC_LIBS)
+
+$(OBJ_DIR)/%.o : $(SRC_DIR)/%.c | $(OBJ_DIR)
+	$(CC) $(CC_FLAGS) -c $< -o $@ $(CC_LIBS)
+
+$(BIN_DIR) $(OBJ_DIR):
+	mkdir -p $@
+
+clean:
+	$(RM) -rv bin/nn $(OBJ_DIR)
+
+-include $(OBJS_C:.o=.d)
