@@ -1,5 +1,6 @@
 /*
     Example for CKKS bootstrapping with sparse packing
+    https://github.com/openfheorg/openfhe-development/blob/main/src/pke/examples/advanced-ckks-bootstrapping.cpp aldatuta
 */
 
 #define PROFILE
