@@ -13,23 +13,28 @@ OBJ_DIR = obj
 BIN_DIR = bin
 
 # Source files
-C_SRCS   := $(wildcard $(SRC_DIR)/*.c)
-CPP_SRCS := enc_inference.cpp
+C_SRCS    := $(wildcard $(SRC_DIR)/*.c)
+CPP_SRCS  := enc_inference.cpp enc_training.cpp
 
 # Object files
-OBJS_C   := $(C_SRCS:$(SRC_DIR)/%.c=$(OBJ_DIR)/%.o)
-OBJS_CPP := $(CPP_SRCS:%.cpp=$(OBJ_DIR)/%.o)
+OBJS_C    := $(C_SRCS:$(SRC_DIR)/%.c=$(OBJ_DIR)/%.o)
+OBJS_CPP  := $(CPP_SRCS:%.cpp=$(OBJ_DIR)/%.o)
+ALL_OBJS  := $(OBJS_C) $(OBJS_CPP)
 
-# The main executable that links main.o, enc_inference.o and other C objects
-TARGET = $(BIN_DIR)/nn
+# Targets
+TARGET1 = $(BIN_DIR)/test
+TARGET2 = $(BIN_DIR)/train
 
 .PHONY: all clean
 
-all: $(TARGET)
+all: $(TARGET1) $(TARGET2)
 
-# Link executable with g++, including main.o, enc_inference.o and other C objects (except main.o)
-$(TARGET): $(OBJ_DIR)/main.o $(OBJ_DIR)/enc_inference.o $(filter-out $(OBJ_DIR)/main.o, $(OBJS_C)) | $(BIN_DIR)
-	$(CXX) $^ -o $@ $(LIB_DIR) $(LIBS)
+# Executables (both need full set of objects)
+$(TARGET1): $(ALL_OBJS) | $(BIN_DIR)
+	$(CXX) $(ALL_OBJS) -o $@ $(LIB_DIR) $(LIBS)
+
+$(TARGET2): $(ALL_OBJS) | $(BIN_DIR)
+	$(CXX) $(ALL_OBJS) -o $@ $(LIB_DIR) $(LIBS)
 
 # Compile C source files
 $(OBJ_DIR)/%.o: $(SRC_DIR)/%.c | $(OBJ_DIR)
@@ -44,7 +49,7 @@ $(OBJ_DIR) $(BIN_DIR):
 	mkdir -p $@
 
 clean:
-	$(RM) -rv $(OBJ_DIR) $(BIN_DIR)/*.exe $(TARGET)
+	$(RM) -rv $(OBJ_DIR) $(BIN_DIR)/*.exe $(TARGET1) $(TARGET2)
 
-# Include dependency files if they exist
+# Include dependency files
 -include $(OBJS_C:.o=.d) $(OBJS_CPP:.o=.d)
