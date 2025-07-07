@@ -8,7 +8,8 @@
 #include "test.h"
 #include "train.h"
 
-#include "enc_or.h"
+#include "enc_testing.h"
+#include "enc_training.h"
 
 int main(int argc, char **argv) {
 
@@ -23,10 +24,22 @@ int main(int argc, char **argv) {
     parse_arguments(argc, argv);
 
     if(train_mode){
-        srand(seed);
+        //srand(seed);
         read_csv(dataset, &ds, layers[0], layers[n_layers - 1]);
         init_nn(&nn, n_layers, layers);
+
+        printf("\nPLAINTEXT TRAINING\n\n");
+        import_nn(&nn, model);
+        print_nn(&nn);
         train(&nn, &ds, epochs, batches, lr);
+        print_nn(&nn);
+        
+        printf("\nCIPHERTEXT TRAINING\n\n");
+        import_nn(&nn, model);
+        print_nn(&nn);
+        //encrypt_dataset(); // Serialization egiten ikasi
+        encrypted_dataset_training(&nn, &ds, epochs, batches, lr);
+        print_nn(&nn);
         export_nn(&nn, model);
     }
     else if(test_mode){
@@ -36,7 +49,7 @@ int main(int argc, char **argv) {
         test(&nn, &ds);
 	    print_nn(&nn);
         printf("\nCIPHERTEXT INPUT INFERENCE\n");
-	    encrypted_inputs_testing(&nn, &ds);
+	    encrypted_dataset_testing(&nn, &ds);
     }
     
     return(0);

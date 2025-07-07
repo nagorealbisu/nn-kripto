@@ -11,6 +11,8 @@
 #include "train.h"
 #include "globals.h"
 
+#include <unistd.h>
+
 void init_nn(nn_t *nn, int n_layers, int *layers_size){
     nn->n_layers = n_layers;
     nn->layers_size = layers_size;
@@ -28,6 +30,66 @@ void init_nn(nn_t *nn, int n_layers, int *layers_size){
 void train(nn_t *nn, ds_t *ds, int epochs, int size_batch, double lr){
 
     int i, n, x, n_batches, min_batch;
+    double **A, **Z, **D, **d;
+    int *order;
+    double loss;
+    struct timespec t1, t2;
+    clockid_t clk_id = CLOCK_MONOTONIC;
+  
+    order = (int*)malloc(ds->n_samples * sizeof(int));
+    for(i=0; i<nn->n_layers; i++){
+        printf("nn->layers_size: %d\n", nn->layers_size[i]);
+    }
+    
+    A = alloc_matrix_1v(nn->n_layers, nn->layers_size, init_zero);
+    Z = alloc_matrix_1v(nn->n_layers, nn->layers_size, init_zero);
+    D = alloc_matrix_2v(nn->n_layers - 1, &(nn->layers_size[1]), &(nn->layers_size[0]), init_zero);
+    d = alloc_matrix_1v(nn->n_layers - 1, &(nn->layers_size[1]), init_zero);
+    
+    n_batches = ds->n_samples / size_batch;
+
+    for(i = 0; i < ds->n_samples; i++)
+        order[i] = i;
+    
+    for (n = 0; n < epochs; n++) {
+        
+        if(verbose)
+            printf("Epoch %d/%d \n", n, epochs);
+        
+        loss = 0.0;
+
+        // shuffle(order, ds->n_samples);
+
+        clock_gettime(clk_id, &t1);
+
+        for (x = 0; x < n_batches; x++) {
+            for(min_batch = (x * size_batch); min_batch < ((x + 1) * size_batch); min_batch++){
+            
+                i = order[min_batch];
+                //printf("\nFORWARD PASS");
+                forward_pass(nn, &ds->inputs[i * ds->n_inputs], A, Z); 
+                //printf("\nBACK PROPAGATION");
+                loss += back_prop(nn, &ds->outputs[i * ds->n_outputs], A, Z, D, d);
+            }
+            //printf("\nUPDATE");
+            update(nn, D, d, lr, size_batch);
+            //print_nn(nn);
+        }
+        loss /= ds->n_samples; 
+        clock_gettime(clk_id, &t2);
+
+        if(verbose)
+            printf(" time: %ld us - loss: %.*f\n", diff_time(t2, t1), 12, loss);
+
+        //sleep(1);
+        print_nn(nn);
+    }
+}
+
+
+void train2(nn_t *nn, ds_t *ds, int epochs, int size_batch, double lr){
+
+    int i, n, x, n_batches, min_batch;
     double **A, **Z, **D, **d;;
     int *order;
     double loss;
@@ -35,9 +97,12 @@ void train(nn_t *nn, ds_t *ds, int epochs, int size_batch, double lr){
     clockid_t clk_id = CLOCK_MONOTONIC;
   
     order = (int*)malloc(ds->n_samples * sizeof(int));
+    for(i=0; i<nn->n_layers; i++){
+        printf("nn->layers_size: %d\n", nn->layers_size[i]);
+    }
     
-    A = alloc_matrix_1v(nn->n_layers, nn->layers_size, init_zero); 
-    Z = alloc_matrix_1v(nn->n_layers, nn->layers_size, init_zero); 
+    A = alloc_matrix_1v(nn->n_layers, nn->layers_size, init_zero);
+    Z = alloc_matrix_1v(nn->n_layers, nn->layers_size, init_zero);
     D = alloc_matrix_2v(nn->n_layers - 1, &(nn->layers_size[1]), &(nn->layers_size[0]), init_zero);
     d = alloc_matrix_1v(nn->n_layers - 1, &(nn->layers_size[1]), init_zero);
     
@@ -72,6 +137,8 @@ void train(nn_t *nn, ds_t *ds, int epochs, int size_batch, double lr){
         if(verbose)
             printf(" time: %ld us - loss: %.*f\n", diff_time(t2, t1), 12, loss);
 
+        //sleep(1);
+        //print_nn(nn);
     }
 
 }

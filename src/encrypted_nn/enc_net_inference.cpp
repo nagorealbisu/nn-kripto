@@ -15,129 +15,168 @@ extern "C" {
 }
 
 // Sigmoid: 1 / (1 + exp(-x))
-auto sigmoid_chebyshev = [](double x) -> double {
+auto sigmoid_chebyshev_test = [](double x) -> double {
     return 1.0 / (1.0 + std::exp(-x));
 };
 
 using namespace lbcrypto;
 
+uint32_t depth;
+
 Ciphertext<DCRTPoly> forward_pass(
-    CryptoContext<DCRTPoly> cc,
+    CryptoContext<DCRTPoly> &cc,
     const nn_t* nn,
-    const std::vector<std::vector<Plaintext>>& pW,
-    const std::vector<std::vector<Plaintext>>& pB,
-    const Ciphertext<DCRTPoly>& cx,
+    const std::vector<std::vector<Ciphertext<DCRTPoly>>>& cW,
+    const std::vector<std::vector<Ciphertext<DCRTPoly>>>& cB,
+    const Plaintext& px,
     int input_size){
 
-    Ciphertext<DCRTPoly> cY = cx;
+    Ciphertext<DCRTPoly> cY;
 
     for (int layer = 0; layer < nn->n_layers - 1; layer++){
         std::vector<Ciphertext<DCRTPoly>> cNeuronak(nn->layers_size[layer+1]);
-        //std::cout << "Layer: " << layer << std::endl;
+        //std::cout << "Layer " << layer << ", ciphertext level: " << cY->GetLevel() << std::endl;
         // paralelizatu
         for(int neurona = 0; neurona < nn->layers_size[layer+1]; neurona++){
-            cNeuronak[neurona] = cc->EvalAdd(cc->EvalInnerProduct(cY, pW[layer][neurona], input_size), pB[layer][neurona]);
-            cNeuronak[neurona] = cc->EvalChebyshevFunction(sigmoid_chebyshev, cNeuronak[neurona], -10, 10, 5);
+            
+            if(layer == 0) cNeuronak[neurona] = cc->EvalAdd(cc->EvalInnerProduct(cW[layer][neurona], px, input_size), cB[layer][neurona]);
+            else cNeuronak[neurona] = cc->EvalAdd(cc->EvalInnerProduct(cY, cW[layer][neurona], input_size), cB[layer][neurona]);
+
+            cNeuronak[neurona] = cc->EvalChebyshevFunction(sigmoid_chebyshev_test, cNeuronak[neurona], -10, 10, 5);
         }
         // sarraila
-        //std::cout << "FUCK" << std::endl;
         cY = cc->EvalMerge(cNeuronak);
-        //std::cout << "mierda porque no se imprime esto" << std::endl;
+
+        if(depth - cY->GetLevel() < 4){
+            //std::cout << "Bootstrapping" << std::endl;
+            cY = cc->EvalBootstrap(cY);
+        }
     }
 
     return cY; // prediction
 }
 
-void init_crypto_context_ckks(CryptoContext<DCRTPoly> &cc){
-    uint32_t multDepth = 12; // xor 12; diabetes 12, 18;
-    uint32_t scaleModSize = 22; // xor 22; diabetes 40, 50;
+KeyPair<DCRTPoly> init_crypto_context_ckks(CryptoContext<DCRTPoly> &cc, nn_t *nn, uint32_t &numSlots){
+
     CCParams<CryptoContextCKKSRNS> parameters;
-    parameters.SetMultiplicativeDepth(multDepth);
-    parameters.SetScalingModSize(scaleModSize);
+
+    parameters.SetSecretKeyDist(UNIFORM_TERNARY);
+    parameters.SetSecurityLevel(HEStd_NotSet);  // jostailuzkoa --> HEStd_128_classic gutxienez
+    parameters.SetRingDim(1 << 12); // jostailuzkoa. HEStd_128_classic --> 1<<17 gutxienez
+
+    #if NATIVEINT == 128
+        parameters.SetScalingTechnique(FIXEDAUTO);
+        parameters.SetScalingModSize(78);
+        parameters.SetFirstModSize(89);
+    #else
+        parameters.SetScalingTechnique(FLEXIBLEAUTO);
+        parameters.SetScalingModSize(59);
+        parameters.SetFirstModSize(60);
+    #endif
+
+    std::vector<uint32_t> levelBudget = {2, 2}; // edo {3,3}. {1,1} errorea bootstrapping egiterakoan
+    std::vector<uint32_t> bsgsDim = {0, 0};
+
+    uint32_t levelsAfterBootstrap = 2;
+    depth = levelsAfterBootstrap + FHECKKSRNS::GetBootstrapDepth(levelBudget, UNIFORM_TERNARY);
+    std::cout << "\nDepth: " << depth << std::endl;
+    parameters.SetMultiplicativeDepth(depth);
+
+    numSlots = 8;
+    parameters.SetBatchSize(numSlots);
+
     cc = GenCryptoContext(parameters);
 
     cc->Enable(PKE);
     cc->Enable(KEYSWITCH);
     cc->Enable(LEVELEDSHE);
     cc->Enable(ADVANCEDSHE);
-}
+    cc->Enable(FHE);
 
-KeyPair<DCRTPoly> generate_keys(CryptoContext<DCRTPoly> &cc, nn_t *nn){
     KeyPair<DCRTPoly> keys = cc->KeyGen();
     cc->EvalMultKeysGen(keys.secretKey);
     cc->EvalSumKeyGen(keys.secretKey);
 
     // EvalMerge erabiltzeko beharrezkoak diren RotationKey-ak sortu
     std::vector<int32_t> indexList;
-    int max = 0;
-    for(int i = 0; i < nn->n_layers; i++){
-        if (nn->layers_size[i] > max)
-            max = nn->layers_size[i];
-    }
-    for(int i = 1; i < max; i++){
+
+    for(int i = 1; i < (int)numSlots; i++){ // ALDATUTA
         indexList.push_back(i);
         indexList.push_back(-i);
     }
-
     cc->EvalAtIndexKeyGen(keys.secretKey, indexList);
+
+    // Bootstrapping keys
+    cc->EvalBootstrapSetup(levelBudget, bsgsDim, numSlots);
+    cc->EvalBootstrapKeyGen(keys.secretKey, numSlots);
 
     return keys;
 }
 
-extern "C" int encrypted_inputs_testing(nn_t *nn, ds_t *ds) {
+extern "C" int encrypted_network_testing(nn_t *nn, ds_t *ds) {
+
+    // proba
+    uint32_t numSlots = 8; // sarearen dimentsioen arabera
 
     // CryptoContext-a hasieratu
     std::cout << "CryptoContext-a sortzen... " << std::endl;
     CryptoContext<DCRTPoly> cc;
-    init_crypto_context_ckks(cc);
-    // Gakoak sortu
-    std::cout << "Gakoak sortzen... " << std::endl;
-    KeyPair<DCRTPoly> keys = generate_keys(cc, nn);
+    KeyPair<DCRTPoly> keys = init_crypto_context_ckks(cc, nn, numSlots);
+
+    std::cout << "\nnumSlots = " << numSlots << std::endl;
     
     int N = ds->n_samples; // input kop
     int input_size = nn->layers_size[0]; // bitarra --> input_size = 2
     std::cout << "N = " << N << ", input_size = " << input_size << std::endl;
 
-    std::vector<std::vector<double>> x(N, std::vector<double>(input_size));
+    std::vector<std::vector<double>> x(N, std::vector<double>(numSlots, 0.0));
     for(int i=0; i<N; i++){
         for(int j=0; j<input_size; j++){
             x[i][j] = ds->inputs[i*ds->n_inputs + j];
-            //std::cout << "x[i][j]" << x[i][j] << std::endl;
         }
     }
 
     // Make packed plaintext
     std::vector<Plaintext> px(N);
-    for(int i = 0; i < N; i++) px[i] = cc->MakeCKKSPackedPlaintext(x[i]);
+    for(int i = 0; i < N; i++){
+        px[i] = cc->MakeCKKSPackedPlaintext(x[i]);
+    }
 
     std::vector<std::vector<Plaintext>> pW(nn->n_layers - 1);
     std::vector<std::vector<Plaintext>> pB(nn->n_layers - 1);
+    std::vector<std::vector<Ciphertext<DCRTPoly>>> cW(N), cB(N);
     //std::vector<Plaintext> pB(nn->n_layers - 1);
 
     // funtzio bat sortu: pack plaintext
-    for(int i = 0; i < nn->n_layers - 1; i++){
+    for (int i = 0; i < nn->n_layers - 1; i++) {
         int rows = nn->layers_size[i];
-        int cols = nn->layers_size[i+1];
-
+        int cols = nn->layers_size[i + 1];
         double* Wi = nn->WH[i];
 
         pW[i].resize(cols);
-        for(int j = 0; j < cols; j++){
-            std::vector<double> Wj(Wi + j * rows, Wi + (j + 1) * rows);
+        cW[i].resize(cols);
+        for (int j = 0; j < cols; j++) {
+            std::vector<double> Wj(numSlots, 0.0);
+            for (int k = 0; k < rows; k++) {
+                Wj[k] = Wi[j * rows + k];
+            }
+            //pW[i][j] = cc->MakeCKKSPackedPlaintext(Wj, 1, depth - 1, nullptr, numSlots);
+
             pW[i][j] = cc->MakeCKKSPackedPlaintext(Wj);
+            cW[i][j] = cc->Encrypt(keys.publicKey, pW[i][j]);
         }
 
         std::vector<double> Bi(nn->BH[i], nn->BH[i] + cols);
         pB[i].resize(cols);
-        for(int j = 0; j < cols; j++){
-                std::vector<double> c1 = {Bi[j]};
-                pB[i][j] = cc->MakeCKKSPackedPlaintext(c1);
+        cB[i].resize(cols);
+        for (int j = 0; j < cols; j++) {
+            std::vector<double> bj(numSlots, 0.0);
+            bj[0] = Bi[j];
+            //pB[i][j] = cc->MakeCKKSPackedPlaintext(bj, 1, depth - 1, nullptr, numSlots);
+            pB[i][j] = cc->MakeCKKSPackedPlaintext(bj);
+            cB[i][j] = cc->Encrypt(keys.publicKey, pB[i][j]);
         }
     }
-
-    // Encrypt
-    std::vector<Ciphertext<DCRTPoly>> cx(N);
-    for(int i = 0; i < N; i++) cx[i] = cc->Encrypt(keys.publicKey, px[i]);
     
     std::vector<Ciphertext<DCRTPoly>> cY(N); // predictions (y)
 
@@ -147,12 +186,13 @@ extern "C" int encrypted_inputs_testing(nn_t *nn, ds_t *ds) {
 
     // paralelizatu --> dummy bat sortu lehenengo
     for(int i = 0; i < N; i++) {
-        cY[i] = forward_pass(cc, nn, pW, pB, cx[i], input_size);
+        cY[i] = forward_pass(cc, nn, cW, cB, px[i], input_size);
         std::cout << i << std::endl;
     }
 
     end = std::chrono::high_resolution_clock::now();
-    std::cout << "\nDenbora Encrypted Testing: " << std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count() << " ms" << std::endl;
+    std::cout << "\nDenbora totala: " << std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count() << " ms" << std::endl;
+    std::cout << "BB denbora: " << (std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count())/N << " ms" << std::endl;
     std::cout << "\nPredictions = \n";
 
     int tp = 0, fp = 0, tn = 0, fn = 0;
