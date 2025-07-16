@@ -199,7 +199,7 @@ void update(
                 if(depth - cW[layer][neurona][k]->GetLevel() < 6)
                     cW[layer][neurona][k] = cc->EvalBootstrap(cW[layer][neurona][k]);
                 
-                cW[layer][neurona][k] = cc->EvalSub(cW[layer][neurona][k], cc->EvalMult(cD[layer][neurona][k], cc->MakeCKKSPackedPlaintext(std::vector<double>{lr/batch_size}, numSlots)));
+                cW[layer][neurona][k] = cc->EvalSub(cW[layer][neurona][k], cc->EvalMult(cD[layer][neurona][k], cc->MakeCKKSPackedPlaintext(std::vector<double>{lr/batch_size}, 1)));
                 
                 if(depth - cW[layer][neurona][k]->GetLevel() < 6){
                     cW[layer][neurona][k] = cc->EvalBootstrap(cW[layer][neurona][k]);
@@ -212,7 +212,7 @@ void update(
                 cB[layer][neurona] = cc->EvalBootstrap(cB[layer][neurona]);
             }
 
-            cB[layer][neurona] = cc->EvalSub(cB[layer][neurona], cc->EvalMult(cd[layer][neurona], cc->MakeCKKSPackedPlaintext(std::vector<double>{lr/batch_size}, numSlots)));
+            cB[layer][neurona] = cc->EvalSub(cB[layer][neurona], cc->EvalMult(cd[layer][neurona], cc->MakeCKKSPackedPlaintext(std::vector<double>{lr/batch_size}, 1)));
             if(depth - cB[layer][neurona]->GetLevel() < 6){
                 cB[layer][neurona] = cc->EvalBootstrap(cB[layer][neurona]);
             }
