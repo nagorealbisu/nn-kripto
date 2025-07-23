@@ -17,6 +17,11 @@ using namespace lbcrypto;
 uint32_t depth;
 uint32_t numSlots;
 
+void bootstrap(CryptoContext<DCRTPoly>& cc, Ciphertext<DCRTPoly> &c, int threshold){
+    //std::cout << "c->GetLevel()" << c->GetLevel() << std::endl;
+    if(depth - c->GetLevel() < threshold && c->GetLevel() > 0) c = cc->EvalBootstrap(c);
+}
+
 void print_net(CryptoContext<DCRTPoly>& cc,
     KeyPair<DCRTPoly>& keys, 
     nn_t* nn, 
