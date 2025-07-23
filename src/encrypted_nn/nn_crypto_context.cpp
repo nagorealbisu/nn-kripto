@@ -19,11 +19,10 @@ extern "C" {
 using namespace lbcrypto;
 
 KeyPair<DCRTPoly> init_crypto_context_ckks_train(CryptoContext<DCRTPoly> &cc, nn_t *nn, uint32_t &numSlots){
-    //uint32_t multDepth = 16; // xor 12; diabetes 12, 18;
-    //uint32_t scaleModSize = 40; // xor 22; diabetes 40, 50;
     CCParams<CryptoContextCKKSRNS> parameters;
 
     parameters.SetSecretKeyDist(UNIFORM_TERNARY);
+    //parameters.SetSecurityLevel(HEStd_128_classic);
     parameters.SetSecurityLevel(HEStd_NotSet);  // jostailuzkoa --> HEStd_128_classic gutxienez
     parameters.SetRingDim(1 << 12); // jostailuzkoa. HEStd_128_classic --> 1<<17 gutxienez
 
@@ -39,10 +38,10 @@ KeyPair<DCRTPoly> init_crypto_context_ckks_train(CryptoContext<DCRTPoly> &cc, nn
 
     parameters.SetBatchSize(numSlots); // neurona kopuruarena arabera --> XOR: 2
 
-    std::vector<uint32_t> levelBudget = {3, 3}; // edo {2,2}. {1,1} errorea bootstrapping egiterakoan
-    std::vector<uint32_t> bsgsDim = {1, 1};
+    std::vector<uint32_t> levelBudget = {4, 4}; // edo {2,2}. {1,1} errorea bootstrapping egiterakoan
+    std::vector<uint32_t> bsgsDim = {0, 0};
 
-    uint32_t levelsAfterBootstrap = 20; // 8 ondo
+    uint32_t levelsAfterBootstrap = 20;
     depth = levelsAfterBootstrap + FHECKKSRNS::GetBootstrapDepth(levelBudget, UNIFORM_TERNARY);
     //std::cout << "\nDepth: " << depth << std::endl;
     parameters.SetMultiplicativeDepth(depth);
@@ -73,9 +72,9 @@ KeyPair<DCRTPoly> init_crypto_context_ckks_train(CryptoContext<DCRTPoly> &cc, nn
     // Bootstrapping keys
     cc->EvalBootstrapSetup(levelBudget, bsgsDim, numSlots);
     cc->EvalBootstrapKeyGen(keys.secretKey, numSlots);
-    //parameters.SetBatchSize(numSlots);
 
     std::cout << "\nMultDepth: " << depth << std::endl;
 
     return keys;
 }
+
