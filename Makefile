@@ -1,11 +1,11 @@
 # Compiler settings
 CXX = g++
 CC  = gcc
-CXX_FLAGS = -Iinclude -I/home/nagor/openfhe-development/src/pke/include -D__USE_MINGW_ANSI_STDIO=1 -Wall -MMD -MP -fpermissive
-C_FLAGS   = -Iinclude -D__USE_MINGW_ANSI_STDIO=1 -Wall -MMD -MP -DCPU
+CXX_FLAGS = -Iinclude -I/home/nagor/openfhe-development/src/pke/include -D__USE_MINGW_ANSI_STDIO=1 -Wall -MMD -MP -fpermissive -fopenmp
+C_FLAGS   = -Iinclude -D__USE_MINGW_ANSI_STDIO=1 -Wall -MMD -MP -DCPU -fopenmp
 
 LIB_DIR   = -L/home/nagor/openfhe-development/build/lib
-LIBS      = -lOPENFHEbinfhe -lOPENFHEcore -lOPENFHEpke -lm
+LIBS      = -lOPENFHEbinfhe -lOPENFHEcore -lOPENFHEpke -lm -fopenmp
 
 # Directories
 SRC_DIR = src
