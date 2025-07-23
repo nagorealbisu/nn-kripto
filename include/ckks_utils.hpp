@@ -14,6 +14,8 @@ using namespace lbcrypto;
 extern uint32_t depth;
 extern uint32_t numSlots;
 
+void bootstrap(CryptoContext<DCRTPoly>& cc, Ciphertext<DCRTPoly> &c, int threshold);
+
 void print_net(CryptoContext<DCRTPoly>& cc,
                KeyPair<DCRTPoly>& keys,
                nn_t* nn,
