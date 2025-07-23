@@ -42,7 +42,7 @@ KeyPair<DCRTPoly> init_crypto_context_ckks_train(CryptoContext<DCRTPoly> &cc, nn
     std::vector<uint32_t> levelBudget = {3, 3}; // edo {2,2}. {1,1} errorea bootstrapping egiterakoan
     std::vector<uint32_t> bsgsDim = {1, 1};
 
-    uint32_t levelsAfterBootstrap = 6; // 8 ondo
+    uint32_t levelsAfterBootstrap = 20; // 8 ondo
     depth = levelsAfterBootstrap + FHECKKSRNS::GetBootstrapDepth(levelBudget, UNIFORM_TERNARY);
     //std::cout << "\nDepth: " << depth << std::endl;
     parameters.SetMultiplicativeDepth(depth);
