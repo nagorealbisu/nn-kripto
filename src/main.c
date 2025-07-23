@@ -24,12 +24,13 @@ int main(int argc, char **argv) {
     parse_arguments(argc, argv);
 
     if(train_mode){
-        //srand(seed);
+        srand(seed);
         read_csv(dataset, &ds, layers[0], layers[n_layers - 1]);
         init_nn(&nn, n_layers, layers);
+	export_nn(&nn, model);
 
         printf("\nPLAINTEXT TRAINING\n\n");
-        import_nn(&nn, model);
+        //import_nn(&nn, model);
         print_nn(&nn);
         train(&nn, &ds, epochs, batches, lr);
         print_nn(&nn);
@@ -37,7 +38,7 @@ int main(int argc, char **argv) {
         printf("\nCIPHERTEXT TRAINING\n\n");
         import_nn(&nn, model);
         print_nn(&nn);
-        //encrypt_dataset(); // Serialization egiten ikasi
+        //encrypt_dataset();
         encrypted_dataset_training(&nn, &ds, epochs, batches, lr);
         print_nn(&nn);
         export_nn(&nn, model);
@@ -54,4 +55,5 @@ int main(int argc, char **argv) {
     
     return(0);
 }
+
 
