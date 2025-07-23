@@ -10,6 +10,7 @@
 #include <iostream>
 
 #include "globals.hpp"
+#include "ckks_utils.hpp"
 
 extern "C" {
     #include "nn.h"
@@ -34,61 +35,51 @@ Ciphertext<DCRTPoly> forward_pass(
     std::vector<std::vector<Ciphertext<DCRTPoly>>>& cZ
     ){
 
-    Ciphertext<DCRTPoly> cY = cc->EvalMerge(cx);
     for(int i=0; i<input_size; i++){
         cA[0][i] = cx[i];
     }
+
+    Ciphertext<DCRTPoly> cY;
 
     std::vector<double> bat = {1.0};
     Plaintext pBat = cc->MakeCKKSPackedPlaintext(bat, 1);
 
     for(int layer = 1; layer < nn->n_layers; layer++){
-        //std::cout << "\nLayer: " << layer << std::endl;
+        //std::cout << "\t\tLayer: " << layer << std::endl;
         for(int neurona = 0; neurona < nn->layers_size[layer]; neurona++){
-            // Zlj
-            for(size_t k=0; k<cW[layer-1][neurona].size(); k++)
-                if(depth - cW[layer-1][neurona][k]->GetLevel() < 6)
-                    cW[layer-1][neurona][k] = cc->EvalBootstrap(cW[layer-1][neurona][k]);
-            
+            //std::cout << "\t\tNeurona: " << neurona << std::endl;
             // wx + b
             cZ[layer][neurona] = cB[layer-1][neurona];
+            std::vector<Ciphertext<DCRTPoly>> cMult(nn->layers_size[layer-1]), cMultRescale(nn->layers_size[layer-1]);
+
             for(int j=0; j<nn->layers_size[layer-1]; j++){
-                Ciphertext<DCRTPoly> cMult = cc->EvalMult(cA[layer-1][j], cW[layer-1][neurona][j]);
-                
-                if(depth - cMult->GetLevel() < 6)
-                    cMult = cc->EvalBootstrap(cMult);
-
-                cZ[layer][neurona] = cc->EvalAdd(cZ[layer][neurona], cMult);
+                cMult[j] = cc->EvalMult(cA[layer-1][j], cW[layer-1][neurona][j]);
+                cMultRescale[j] = cc->Rescale(cMult[j]);
             }
-            //cZ[layer][neurona] = cc->EvalAdd(cc->EvalInnerProduct(cY, cc->EvalMerge(cW[layer-1][neurona]), nn->layers_size[layer]), cB[layer-1][neurona]);
 
-            if(depth - cZ[layer][neurona]->GetLevel() < 8){
-                cZ[layer][neurona] = cc->EvalBootstrap(cZ[layer][neurona]);
+            for(int j=0; j<nn->layers_size[layer-1]; j++){
+                cZ[layer][neurona] = cc->EvalAdd(cZ[layer][neurona], cMultRescale[j]);
             }
-            
+            //bootstrap(cc, cZ[layer][neurona], 8);
+
             // Sigmoid
-            cA[layer][neurona] = cc->EvalChebyshevFunction(sigmoid_chebyshev, cZ[layer][neurona], -10, 10, 15); // KONTUZ!! tartea eta gradua
+            cA[layer][neurona] = cc->EvalChebyshevFunction(sigmoid_chebyshev, cZ[layer][neurona], -10, 10, 15);
 
-            if(depth - cA[layer][neurona]->GetLevel() < 10 && cA[layer][neurona]->GetLevel() > 0){
-                cA[layer][neurona] = cc->EvalBootstrap(cA[layer][neurona]);
-            }
+            bootstrap(cc, cA[layer][neurona], 10);
+
             // dSigmoid
-            cZ[layer][neurona] = cc->EvalMult(cA[layer][neurona], cc->EvalSub(pBat, cA[layer][neurona]));
+            auto cSub = cc->Rescale(cc->EvalSub(pBat, cA[layer][neurona]));
+            cZ[layer][neurona] = cc->EvalMult(cA[layer][neurona], cSub);
 
-            if(depth - cA[layer][neurona]->GetLevel() < 8){ // Merge egiteko
-                cA[layer][neurona] = cc->EvalBootstrap(cA[layer][neurona]);
-            }
-            if(depth - cZ[layer][neurona]->GetLevel() < 6){
-                cZ[layer][neurona] = cc->EvalBootstrap(cZ[layer][neurona]);
-            }
+            cZ[layer][neurona] = cc->Rescale(cZ[layer][neurona]);
+
         }
 
-        if(cA[layer].size() > 1) cY = cc->EvalMerge(cA[layer]);
-        else cY = cA[layer][0];
-        
-        if(depth - cY->GetLevel() < 4){
+        if(cA[layer+1].size() == 1) cY = cA[layer+1][0]; // baldin bitarra
+
+        /*if(depth - cY->GetLevel() < 4){ // depende
             cY = cc->EvalBootstrap(cY);
-        }
+        }*/
     }
 
     return cY; // prediction
@@ -100,9 +91,6 @@ Ciphertext<DCRTPoly> mse(CryptoContext<DCRTPoly>& cc,
                          int length){
     Ciphertext<DCRTPoly> c1;
     for(int i=0; i<length; i++){
-        if(depth - cA[i]->GetLevel() < 6){
-            cA[i] = cc->EvalBootstrap(cA[i]);
-        }
         Ciphertext<DCRTPoly> cSub = cc->EvalSub(cA[i], cY[i]);
         Ciphertext<DCRTPoly> cMult = cc->EvalMult(cSub, cSub);
         if (i==0) c1 = cMult;
@@ -110,7 +98,6 @@ Ciphertext<DCRTPoly> mse(CryptoContext<DCRTPoly>& cc,
     }
     return cc->EvalMult(c1, 1.0/length);
 }
-
 
 Ciphertext<DCRTPoly> dmse(CryptoContext<DCRTPoly> &cc,
                           Ciphertext<DCRTPoly> &cA,
@@ -121,7 +108,7 @@ Ciphertext<DCRTPoly> dmse(CryptoContext<DCRTPoly> &cc,
     return cc->EvalMult(cSub, 2.0/length);
 }
 
-
+// best
 Ciphertext<DCRTPoly> back_propagation(
     CryptoContext<DCRTPoly> &cc,
     const nn_t* nn,
@@ -143,6 +130,7 @@ Ciphertext<DCRTPoly> back_propagation(
     Ciphertext<DCRTPoly> loss = mse(cc, cA[L+1], cy, nn->layers_size[L+1]);
 
     // E last layer
+    //std::cout << "\t\tLast Layer" << std::endl;
     for(int j = 0; j < nn->layers_size[L+1]; j++){
 
         cE[L][j] = dmse(cc, cA[L+1][j], cy[j], nn->layers_size[L+1]); // dLoss
@@ -155,9 +143,9 @@ Ciphertext<DCRTPoly> back_propagation(
     }
 
     for(int l=L-1; l >= 0; l--){
-        //std::cout << "Layer: " << l << std::endl;
+        //std::cout << "\t\tLayer: " << layer << std::endl;
         for(int j = 0; j < nn->layers_size[l+1]; j++){
-            //std::cout << "Neurona: " << j << std::endl;
+            //std::cout << "\t\t\tNeurona: " << j << std::endl;
             Ciphertext<DCRTPoly> c1;
             for(int k=0; k<nn->layers_size[l+2]; k++){
                 if(k == 0) c1 = cc->EvalMult(cE[l+1][k], cW[l+1][k][j]);
@@ -192,30 +180,12 @@ void update(
         for(int neurona = 0; neurona < nn->layers_size[layer+1]; neurona++){
 
             for(int k=0; k<nn->layers_size[layer]; k++){
-
-                if(depth - cD[layer][neurona][k]->GetLevel() < 6)
-                    cD[layer][neurona][k] = cc->EvalBootstrap(cD[layer][neurona][k]);
-                
-                if(depth - cW[layer][neurona][k]->GetLevel() < 6)
-                    cW[layer][neurona][k] = cc->EvalBootstrap(cW[layer][neurona][k]);
-                
-                cW[layer][neurona][k] = cc->EvalSub(cW[layer][neurona][k], cc->EvalMult(cD[layer][neurona][k], cc->MakeCKKSPackedPlaintext(std::vector<double>{lr/batch_size}, 1)));
-                
-                if(depth - cW[layer][neurona][k]->GetLevel() < 6){
-                    cW[layer][neurona][k] = cc->EvalBootstrap(cW[layer][neurona][k]);
-                }
+                auto cMult = cc->Rescale(cc->EvalMult(cD[layer][neurona][k], cc->MakeCKKSPackedPlaintext(std::vector<double>{lr/batch_size}, 1)));
+                auto cSub = cc->EvalSub(cW[layer][neurona][k], cMult);
+                cW[layer][neurona][k] = cc->Rescale(cSub);
             }
-            if(depth - cd[layer][neurona]->GetLevel() < 6){
-                cd[layer][neurona] = cc->EvalBootstrap(cd[layer][neurona]);
-            }
-            if(depth - cB[layer][neurona]->GetLevel() < 6){
-                cB[layer][neurona] = cc->EvalBootstrap(cB[layer][neurona]);
-            }
-
-            cB[layer][neurona] = cc->EvalSub(cB[layer][neurona], cc->EvalMult(cd[layer][neurona], cc->MakeCKKSPackedPlaintext(std::vector<double>{lr/batch_size}, 1)));
-            if(depth - cB[layer][neurona]->GetLevel() < 6){
-                cB[layer][neurona] = cc->EvalBootstrap(cB[layer][neurona]);
-            }
+            auto cMult = cc->Rescale(cc->EvalMult(cd[layer][neurona], cc->MakeCKKSPackedPlaintext(std::vector<double>{lr/batch_size}, 1)));
+            cB[layer][neurona] = cc->Rescale(cc->EvalSub(cB[layer][neurona], cMult));
         }
     }
 }
