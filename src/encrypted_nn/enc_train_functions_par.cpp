@@ -12,6 +12,7 @@
 #include <thread>
 
 #include "globals.hpp"
+#include "ckks_utils.hpp"
 
 extern "C" {
     #include "nn.h"
@@ -36,15 +37,6 @@ Ciphertext<DCRTPoly> forward_pass(
     std::vector<std::vector<Ciphertext<DCRTPoly>>>& cZ
     ){
 
-    std::chrono::high_resolution_clock::time_point denb;
-
-    int hardware_threads = std::thread::hardware_concurrency();
-    int omp_threads = omp_get_max_threads();
-
-    int extra_threads = hardware_threads - omp_threads;
-    int available_threads = std::max(1, extra_threads);
-
-    denb = std::chrono::high_resolution_clock::now();
     for(int i=0; i<input_size; i++){
         cA[0][i] = cx[i];
     }
@@ -59,51 +51,39 @@ Ciphertext<DCRTPoly> forward_pass(
         //#pragma omp parallel for num_threads(available_threads)
         for(int neurona = 0; neurona < nn->layers_size[layer]; neurona++){
             //std::cout << "\t\tNeurona: " << neurona << std::endl;
-            // Zlj
-            #pragma omp parallel for num_threads(available_threads)
-            for(size_t k=0; k<cW[layer-1][neurona].size(); k++){
-                if(depth - cW[layer-1][neurona][k]->GetLevel() < 6)
-                    cW[layer-1][neurona][k] = cc->EvalBootstrap(cW[layer-1][neurona][k]);
-            }
             // wx + b
             cZ[layer][neurona] = cB[layer-1][neurona];
+            std::vector<Ciphertext<DCRTPoly>> cMult(nn->layers_size[layer-1]), cMultRescale(nn->layers_size[layer-1]);
+
+            #pragma omp simd
             for(int j=0; j<nn->layers_size[layer-1]; j++){
-                Ciphertext<DCRTPoly> cMult = cc->EvalMult(cA[layer-1][j], cW[layer-1][neurona][j]);
-
-                if(depth - cMult->GetLevel() < 6)
-                    cMult = cc->EvalBootstrap(cMult);
-
-                cZ[layer][neurona] = cc->EvalAdd(cZ[layer][neurona], cMult);
+                cMult[j] = cc->EvalMult(cA[layer-1][j], cW[layer-1][neurona][j]);
+                cMultRescale[j] = cc->Rescale(cMult[j]);
             }
 
-            if(depth - cZ[layer][neurona]->GetLevel() < 8){
-                cZ[layer][neurona] = cc->EvalBootstrap(cZ[layer][neurona]);
+            for(int j=0; j<nn->layers_size[layer-1]; j++){
+                cZ[layer][neurona] = cc->EvalAdd(cZ[layer][neurona], cMultRescale[j]);
             }
+            //bootstrap(cc, cZ[layer][neurona], 8);
 
             // Sigmoid
             cA[layer][neurona] = cc->EvalChebyshevFunction(sigmoid_chebyshev, cZ[layer][neurona], -10, 10, 15); // KONTUZ!! tartea eta gradua
 
-            /*if(depth - cA[layer][neurona]->GetLevel() < 10 && cA[layer][neurona]->GetLevel() > 0){
-                cA[layer][neurona] = cc->EvalBootstrap(cA[layer][neurona]);
-            }*/
+            bootstrap(cc, cA[layer][neurona], 10);
+
             // dSigmoid
-            cZ[layer][neurona] = cc->EvalMult(cA[layer][neurona], cc->EvalSub(pBat, cA[layer][neurona]));
+            auto cSub = cc->Rescale(cc->EvalSub(pBat, cA[layer][neurona]));
+            cZ[layer][neurona] = cc->EvalMult(cA[layer][neurona], cSub);
 
-            if(depth - cA[layer][neurona]->GetLevel() < 8){ // Merge egiteko
-                cA[layer][neurona] = cc->EvalBootstrap(cA[layer][neurona]);
-            }
-
-            if(depth - cZ[layer][neurona]->GetLevel() < 6){
-                cZ[layer][neurona] = cc->EvalBootstrap(cZ[layer][neurona]);
-            }
+            cZ[layer][neurona] = cc->Rescale(cZ[layer][neurona]);
 
         }
 
-        if(cA[layer+1].size() == 1) cY = cA[layer+1][0]; // baldin bitarra, else merge? ALDATU
+        if(cA[layer+1].size() == 1) cY = cA[layer+1][0]; // baldin bitarra
 
-        if(depth - cY->GetLevel() < 4){
+        /*if(depth - cY->GetLevel() < 4){
             cY = cc->EvalBootstrap(cY);
-        }
+        }*/
     }
 
     return cY; // prediction
@@ -160,13 +140,15 @@ Ciphertext<DCRTPoly> back_propagation(
 
     // E last layer
     //std::cout << "\t\tLast Layer" << std::endl;
-    #pragma omp parallel for num_threads(available_threads)
+    //#pragma omp parallel for num_threads(available_threads)
+    #pragma omp parallel for schedule(static) num_threads(available_threads)
     for(int j = 0; j < nn->layers_size[L+1]; j++){
 
         cE[L][j] = dmse(cc, cA[L+1][j], cy[j], nn->layers_size[L+1]); // dLoss
         cE[L][j] = cc->EvalMult(cE[L][j], cZ[L+1][j]);
         cd[L][j] = cc->EvalAdd(cd[L][j], cE[L][j]);
 
+        #pragma omp simd
         for(int k = 0; k < nn->layers_size[L]; k++) {
             cD[L][j][k] = cc->EvalAdd(cD[L][j][k], cc->EvalMult(cE[L][j], cA[L][k]));
         }
@@ -174,7 +156,8 @@ Ciphertext<DCRTPoly> back_propagation(
 
     for(int l=L-1; l >= 0; l--){
         //std::cout << "\t\tLayer: " << layer << std::endl;
-        #pragma omp parallel for num_threads(available_threads)
+        //#pragma omp parallel for num_threads(available_threads)
+        #pragma omp parallel for schedule(static) num_threads(available_threads)
         for(int j = 0; j < nn->layers_size[l+1]; j++){
             //std::cout << "\t\t\tNeurona: " << j << std::endl;
             Ciphertext<DCRTPoly> c1;
@@ -185,6 +168,7 @@ Ciphertext<DCRTPoly> back_propagation(
 
             cE[l][j] = cc->EvalMult(c1, cZ[l+1][j]);
 
+            #pragma omp simd
             for(int k = 0; k < nn->layers_size[l]; k++) {
                 cD[l][j][k] = cc->EvalAdd(cD[l][j][k], cc->EvalMult(cE[l][j], cA[l][k]));  // wljk eguneratzeko
             }
@@ -196,6 +180,7 @@ Ciphertext<DCRTPoly> back_propagation(
     return loss;
 }
 
+// paralelo
 void update(
     CryptoContext<DCRTPoly> &cc,
     const nn_t* nn,
@@ -214,36 +199,23 @@ void update(
     int available_threads = std::max(1, extra_threads);
 
     for(int layer = 0; layer < nn->n_layers - 1; layer++){
-        //std::cout << "\t\tLayer: " << layer << std::endl;
-        //#pragma omp parallel for num_threads(available_threads)
         for(int neurona = 0; neurona < nn->layers_size[layer+1]; neurona++){
+
             #pragma omp parallel for num_threads(available_threads)
             for(int k=0; k<nn->layers_size[layer]; k++){
-                if(depth - cD[layer][neurona][k]->GetLevel() < 6)
-                    cD[layer][neurona][k] = cc->EvalBootstrap(cD[layer][neurona][k]);
-
-                if(depth - cW[layer][neurona][k]->GetLevel() < 6)
-                    cW[layer][neurona][k] = cc->EvalBootstrap(cW[layer][neurona][k]);
-                cW[layer][neurona][k] = cc->EvalSub(cW[layer][neurona][k], cc->EvalMult(cD[layer][neurona][k], cc->MakeCKKSPackedPlaintext(std::vector<double>{lr/batch_size}, 1)));
-            }
-            #pragma omp parallel for num_threads(available_threads)
-            for(int k=0; k<nn->layers_size[layer]; k++){
-                if(depth - cW[layer][neurona][k]->GetLevel() < 6){
-                    cW[layer][neurona][k] = cc->EvalBootstrap(cW[layer][neurona][k]);
-                }
-            }
-            if(depth - cd[layer][neurona]->GetLevel() < 6){
-                cd[layer][neurona] = cc->EvalBootstrap(cd[layer][neurona]);
-            }
-            if(depth - cB[layer][neurona]->GetLevel() < 6){
-                cB[layer][neurona] = cc->EvalBootstrap(cB[layer][neurona]);
+                //bootstrap(cc, cD[layer][neurona][k], 6);
+                //bootstrap(cc, cW[layer][neurona][k], 6);
+                auto cMult = cc->Rescale(cc->EvalMult(cD[layer][neurona][k], cc->MakeCKKSPackedPlaintext(std::vector<double>{lr/batch_size}, 1)));
+                auto cSub = cc->EvalSub(cW[layer][neurona][k], cMult);
+                cW[layer][neurona][k] = cc->Rescale(cSub);
+                //bootstrap(cc, cD[layer][neurona][k], 6);
             }
 
-            cB[layer][neurona] = cc->EvalSub(cB[layer][neurona], cc->EvalMult(cd[layer][neurona], cc->MakeCKKSPackedPlaintext(std::vector<double>{lr/batch_size}, 1)));
-
-            if(depth - cB[layer][neurona]->GetLevel() < 6){
-                cB[layer][neurona] = cc->EvalBootstrap(cB[layer][neurona]);
-            }
+            //bootstrap(cc, cd[layer][neurona], 6);
+            //bootstrap(cc, cB[layer][neurona], 6);
+            auto cMult = cc->Rescale(cc->EvalMult(cd[layer][neurona], cc->MakeCKKSPackedPlaintext(std::vector<double>{lr/batch_size}, 1)));
+            cB[layer][neurona] = cc->Rescale(cc->EvalSub(cB[layer][neurona], cMult));
+            //bootstrap(cc, cB[layer][neurona], 6);
         }
     }
 }
